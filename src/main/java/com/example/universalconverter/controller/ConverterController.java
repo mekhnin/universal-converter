@@ -21,8 +21,7 @@ public class ConverterController {
 
     @PostMapping("/convert")
     public ResponseEntity<String> catchPostMapping(@RequestBody RequestObject object) {
-        return converter.convert(object.getFrom(), object.getTo());
+        return converter.convert(object);
     }
 
 }
-

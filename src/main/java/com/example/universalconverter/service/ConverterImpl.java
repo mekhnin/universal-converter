@@ -1,6 +1,7 @@
 package com.example.universalconverter.service;
 
 import com.example.universalconverter.model.Graph;
+import com.example.universalconverter.model.RequestObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -8,7 +9,6 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-
 import java.util.*;
 import java.util.stream.Stream;
 
@@ -19,6 +19,12 @@ public class ConverterImpl implements Converter {
     private final MathContext INTERMEDIATE_MATH_CONTEXT = MathContext.DECIMAL128;
     private final String WRONG_PATTERN = "^\\s*/.*|.*/.*/.*|.*/\\s*$|^\\s*\\*.*|.*\\*\\s*\\*.*|.*\\*\\s*$";
 
+    private final ThreadLocal<String> from = new ThreadLocal<>();
+    private final ThreadLocal<String> to = new ThreadLocal<>();
+    private final ThreadLocal<Queue<String>> numerator = new ThreadLocal<>();
+    private final ThreadLocal<Queue<String>> denominator = new ThreadLocal<>();
+    private final ThreadLocal<BigDecimal> result = new ThreadLocal<>();
+
     private final Graph graph;
 
     @Autowired
@@ -26,56 +32,41 @@ public class ConverterImpl implements Converter {
         this.graph = graph;
     }
 
-    private static class ResultKeeper {
-
-        final String from;
-        final String to;
-
-        Queue<String> numerator;
-        Queue<String> denominator;
-        BigDecimal result;
-
-        ResultKeeper(String from, String to) {
-            this.from = from;
-            this.to = to;
-        }
-
-    }
-
-    public ResponseEntity<String> convert(String from, String to) {
-        ResultKeeper keeper = new ResultKeeper(from, to);
-        if (!checkInput(keeper)) {
+    public ResponseEntity<String> convert(RequestObject object) {
+        from.set(object.getFrom());
+        to.set(object.getTo());
+        if (!checkInput()) {
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
-        if (!findRate(keeper)) {
+        if (!findRate()) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
-        return new ResponseEntity<>(prepareAnswer(keeper), HttpStatus.OK);
+        return new ResponseEntity<>(prepareAnswer(), HttpStatus.OK);
     }
 
-    private boolean checkInput(ResultKeeper keeper) {
-        return checkFormat(keeper) && checkData(keeper);
+    private boolean checkInput() {
+        return checkFormat() && checkData();
     }
 
-    private boolean checkFormat(ResultKeeper keeper) {
-        return Stream.of(keeper.from, keeper.to).noneMatch(s -> s.matches(WRONG_PATTERN));
+    private boolean checkFormat() {
+        return Stream.of(from.get(), to.get()).noneMatch(s -> s.matches(WRONG_PATTERN));
     }
 
-    private boolean checkData(ResultKeeper keeper) {
-        return prepareQueue(keeper) &&
-                keeper.numerator.size() == keeper.denominator.size() &&
-                keeper.numerator.size() > 0;
+    private boolean checkData() {
+        return prepareQueue() &&
+                numerator.get().size() > 0 &&
+                numerator.get().size() == denominator.get().size();
     }
 
-    private boolean prepareQueue(ResultKeeper keeper) {
-        String[] splitFrom = keeper.from.split("/");
-        String[] splitTo = keeper.to.split("/");
-        keeper.numerator = new ArrayDeque<>();
-        keeper.denominator = new ArrayDeque<>();
-        return addUnitsToQueue(splitFrom[0], keeper.numerator) &&
-                addUnitsToQueue(splitTo[0], keeper.denominator) &&
-                (splitFrom.length == 1 || addUnitsToQueue(splitFrom[1], keeper.denominator)) &&
-                (splitTo.length == 1 || addUnitsToQueue(splitTo[1], keeper.numerator));
+    private boolean prepareQueue() {
+        String[] splitFrom = from.get().split("/");
+        String[] splitTo = to.get().split("/");
+        numerator.set(new ArrayDeque<>());
+        denominator.set(new ArrayDeque<>());
+        return addUnitsToQueue(splitFrom[0], numerator.get()) &&
+                addUnitsToQueue(splitTo[0], denominator.get()) &&
+                (splitFrom.length == 1 || addUnitsToQueue(splitFrom[1], denominator.get())) &&
+                (splitTo.length == 1 || addUnitsToQueue(splitTo[1], numerator.get()));
     }
 
     private boolean addUnitsToQueue(String input, Queue<String> output) {
@@ -86,32 +77,32 @@ public class ConverterImpl implements Converter {
                 .allMatch(s -> graph.getBonds(s) != null);
     }
 
-    private boolean findRate(ResultKeeper keeper) {
-        keeper.result = BigDecimal.ONE;
-        while (!keeper.numerator.isEmpty()) {
-            String from = keeper.numerator.poll();
-            if (keeper.denominator.remove(from)) {
+    private boolean findRate() {
+        result.set(BigDecimal.ONE);
+        while (!numerator.get().isEmpty()) {
+            String from = numerator.get().poll();
+            if (denominator.get().remove(from)) {
                 continue;
             }
-            Iterator<String> iterator = keeper.denominator.iterator();
+            Iterator<String> iterator = denominator.get().iterator();
             while (iterator.hasNext()) {
                 String to = iterator.next();
                 if (graph.getBonds(from).containsKey(to)) {
-                    updateResult(from, to, keeper);
+                    updateResult(from, to);
                     iterator.remove();
                     break;
-                } else if (calculateRate(findPath(from, to), keeper)) {
+                } else if (calculateRate(findPath(from, to))) {
                     iterator.remove();
                     break;
                 }
             }
         }
-        return keeper.denominator.isEmpty();
+        return denominator.get().isEmpty();
     }
 
-    private void updateResult(String from, String to, ResultKeeper keeper) {
+    private void updateResult(String from, String to) {
         double rate = graph.getBonds(from).get(to);
-        keeper.result = keeper.result.multiply(BigDecimal.valueOf(rate), INTERMEDIATE_MATH_CONTEXT);
+        result.set(result.get().multiply(BigDecimal.valueOf(rate), INTERMEDIATE_MATH_CONTEXT));
     }
 
     private List<String> findPath(String start, String destination) {
@@ -153,18 +144,17 @@ public class ConverterImpl implements Converter {
         return success ? route : Collections.emptyList();
     }
 
-    private boolean calculateRate(List<String> route, ResultKeeper keeper) {
+    private boolean calculateRate(List<String> route) {
         int size = route.size();
         for (int i = 0; i <= size - 2; i++) {
-            updateResult(route.get(i), route.get(i + 1), keeper);
+            updateResult(route.get(i), route.get(i + 1));
         }
         return size > 1;
     }
 
-    private String prepareAnswer(ResultKeeper keeper) {
-        keeper.result = BigDecimal.ONE.multiply(keeper.result, OUTPUT_MATH_CONTEXT);
-        String result = keeper.result.toPlainString();
-        return result.replaceFirst("0*$", "").replaceFirst("\\.$", "");
+    private String prepareAnswer() {
+        String answer = result.get().round(OUTPUT_MATH_CONTEXT).toPlainString();
+        return answer.replaceFirst("0*$", "").replaceFirst("\\.$", "");
     }
 
 }

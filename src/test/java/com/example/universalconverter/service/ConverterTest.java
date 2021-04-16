@@ -36,9 +36,7 @@ public class ConverterTest {
         expected.add(new ResponseEntity<>(HttpStatus.NOT_FOUND));
 
         for (int i = 0; i < actual.size(); i++) {
-            String from = actual.get(i).getFrom();
-            String to = actual.get(i).getTo();
-            assertEquals(expected.get(i), converter.convert(from, to));
+            assertEquals(expected.get(i), converter.convert(actual.get(i)));
         }
     }
 
