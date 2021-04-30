@@ -35,7 +35,7 @@ public class ConverterImpl implements Converter {
     public ResponseEntity<String> convert(RequestObject object) {
         from.set(object.getFrom());
         to.set(object.getTo());
-        if (!checkInput()) {
+        if (!checkFormat() || !prepareData()) {
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
         if (!findRate()) {
@@ -44,33 +44,25 @@ public class ConverterImpl implements Converter {
         return new ResponseEntity<>(prepareAnswer(), HttpStatus.OK);
     }
 
-    private boolean checkInput() {
-        return checkFormat() && checkData();
-    }
-
     private boolean checkFormat() {
         return Stream.of(from.get(), to.get()).noneMatch(s -> s.matches(WRONG_PATTERN));
     }
 
-    private boolean checkData() {
-        return prepareQueue() &&
-                numerator.get().size() > 0 &&
-                numerator.get().size() == denominator.get().size();
-    }
-
-    private boolean prepareQueue() {
-        String[] splitFrom = from.get().split("/");
-        String[] splitTo = to.get().split("/");
+    private boolean prepareData() {
         numerator.set(new ArrayDeque<>());
         denominator.set(new ArrayDeque<>());
-        return addUnitsToQueue(splitFrom[0], numerator.get()) &&
-                addUnitsToQueue(splitTo[0], denominator.get()) &&
-                (splitFrom.length == 1 || addUnitsToQueue(splitFrom[1], denominator.get())) &&
-                (splitTo.length == 1 || addUnitsToQueue(splitTo[1], numerator.get()));
+        String[] splitFrom = from.get().split("/");
+        String[] splitTo = to.get().split("/");
+        return addUnitsToQueue(numerator.get(), splitFrom[0], splitTo.length == 2 ? splitTo[1] : "") &&
+                addUnitsToQueue(denominator.get(), splitTo[0], splitFrom.length == 2 ? splitFrom[1] : "") &&
+                numerator.get().size() == denominator.get().size() &&
+                !numerator.get().isEmpty();
+
     }
 
-    private boolean addUnitsToQueue(String input, Queue<String> output) {
-        return Stream.of(input.split("\\*"))
+    private boolean addUnitsToQueue(Queue<String> output, String... input) {
+        return Stream.of(input)
+                .flatMap(s -> Arrays.stream(s.split("\\*")))
                 .map(String::trim)
                 .filter(s -> !"".equals(s) && !"1".equals(s))
                 .peek(output::add)
