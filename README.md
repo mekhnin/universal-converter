@@ -1,3 +1,5 @@
+![build](https://github.com/mekhnin/universal-converter/actions/workflows/.github/workflows/maven.yml/badge.svg)
+
 # Universal Converter
 Универсальный HTTP-сервис конвертации единиц измерения.
 
